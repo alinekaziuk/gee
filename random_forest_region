@@ -1,0 +1,66 @@
+//Imagen para SENTINEL 2
+var img= ee.ImageCollection ('COPERNICUS/S2') 
+  .filterDate ('2019-05-01', '2019-05-31') //fechas disponibles ('2015-07-01' - actualidad)
+  .filterBounds (centro_sul) 
+  .filterMetadata ('CLOUDY_PIXEL_PERCENTAGE', 'Less_Than', 1);
+var SentinelFiltro = ee.Image(img.median());
+var SentinelClip = SentinelFiltro.clip (centro_sul);
+Map.addLayer (SentinelClip, {
+  max: 4000, 
+  min: 0.0, 
+  gamma: 1.0,
+  bands: ['B4','B3','B2']}, 
+  'Imagen Sentinel 2');
+print (SentinelFiltro);
+Map.centerObject (SentinelClip);
+
+var amostra = agua.merge(abertura).merge(algodao).merge(arroz).merge(brachiaria).merge(banana).merge(cana).merge(cobertura).merge(eucalipto).merge(feijao).merge(gergelim).merge(girassol).merge(mamona).merge(matanativa).merge(matanativa_serra).merge(milheto).merge(milho).merge(pastagemdegradada).merge(pastagemplantada).merge(pousio).merge(seringa).merge(sorgo).merge(teca).merge(brachiaria_safra);
+
+var bandas = ['B4','B3','B2'];
+
+var treinamento = SentinelClip.select(bandas).sampleRegions({
+ collection: amostra,
+ properties: ['class'],
+ scale: 10,
+});
+
+var classificacao = ee.Classifier.cart ().train({
+  features: treinamento,
+  classProperty: 'class',
+  inputProperties: bandas
+});
+
+var classificacao = SentinelClip.classify(classificacao);
+
+Map.addLayer(classificacao, {min:0, max:23,pallete:['green','blue','magenta']},'classificação');
+
+//Export.image.toDrive({
+//  image: classificacao,
+//  description: 'Classificacao_sentinel_mt',
+//  scale: 10,
+//  region: limite_mt,
+//  folder: "Classificacao",
+//  maxPixels: 1e13
+//});
+
+var ft = classificacao.reduceToVectors(
+      {
+        geometry:centro_sul,
+        scale:10,
+        maxPixels:1e13
+      } );
+      
+print(ft)
+
+
+var exportTable = function(ft){
+
+Export.table.toDrive({
+  collection: ft,
+  description:'classificacao_centro_sul',
+  fileFormat: 'SHP'
+});
+};
+
+exportTable(ft)
+
