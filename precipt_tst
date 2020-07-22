@@ -1,0 +1,224 @@
+// CARREGAR ASSETS E FILTRAR A PARTIR DOS METADADOS
+var roi = municipios.filter(ee.Filter.or(
+                            ee.Filter.eq('NOME','TORRES'),
+                            ee.Filter.eq('NOME','SANTA ROSA'),
+                            ee.Filter.eq('NOME','SANTA VITORIA DO PALMAR'),
+                            ee.Filter.eq('NOME','SAO GABRIEL')));
+
+print(roi);
+
+//DEFINIÇÃO DA COLEÇÃO DE IMAGENS A SER UTILIZADA
+
+var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/PENTAD');
+
+//ATRIBUIÇÃO DO PERÍODO DE INTERESSE
+var startyear = 1981; 
+var endyear = 2017; 
+
+var startmonth = 1;
+var endmonth = 12;
+
+var startdate = ee.Date.fromYMD(startyear, startmonth, 1);
+var enddate = ee.Date.fromYMD(endyear , endmonth, 1);
+
+var years = ee.List.sequence(startyear, endyear);
+
+//SELECIONAR O DADO, PERÍODO E ÁREA DE INTERESSE
+var precip = chirps.filterDate(startdate, enddate)
+  .sort('system:time_start', false)
+  .filterBounds(roi);
+   print(precip)
+
+//FUNÇÃO PARA CALCULAR PRECIPITAÇÃO ANUAL
+var annualPrecip = ee.ImageCollection.fromImages(
+  years.map(function (year) {
+    var annual = precip
+        .filter(ee.Filter.calendarRange(year, year, 'year'))
+        .sum();
+    return annual
+        .set('year', year)
+        .set('system:time_start', ee.Date.fromYMD(year, 1, 1));
+}));
+
+print(annualPrecip);
+
+//ESTABELECER CORES E PARÂMETROS PARA OS GRÁFICOS
+
+var pViz = {
+  min: 1150, 
+  max: 2200, 
+  palette: '000000, 0000FF, FDFF92, FF2700, FF00E7'
+};
+
+var pViz_month = {
+  min: 0, 
+  max: 350, 
+  palette: '000000, 0000FF, FDFF92, FF2700, FF00E7'
+};
+
+var title = {
+  title: 'Total precipitação anual',
+  hAxis: {title: 'Ano'},
+  vAxis: {title: 'Precipitação (mm)'},
+};
+
+var title_month = {
+  title: 'Total precipitação mensal',
+  hAxis: {title: 'Mês'},
+  vAxis: {title: 'Precipitação (mm)'},
+};
+
+// CRIAR UM GRÁFICO A PARTIR DOS DADOS ANUAIS DE PRECIPITAÇÃO
+// USANDO ÁREA DE INTERESSE E UM REDUTOR PARA CALCULAR A PRECIPITAÇÃO MÉDIA NA ÁREA.
+
+var chart = ui.Chart.image.seriesByRegion({
+  imageCollection: annualPrecip, 
+  regions: roi,
+  reducer: ee.Reducer.mean(),
+  band: 'precipitation',
+  scale: 2500,
+  xProperty: 'system:time_start',
+  seriesProperty: 'NOME'
+}).setOptions(title)
+  .setChartType('ColumnChart');
+
+print(chart); //GRÁFICO DE PRECIPITAÇÃO MÉDIA AO MAPA
+
+//EXIBIR OS RESULTADOS IMPRIMINDO O GRÁFICO E ADICIONANDO PRECIPITAÇÃO MÉDIA AO MAPA
+
+var annualMean = annualPrecip.mean().clip(roi);
+
+//AGORA VAMOS CALCULAR A PRECIPITAÇÃO MÉDIA MENSAL. ISSO PRECISA SER FEITO EM DUAS ETAPAS:
+//1. CALCULE A PRECIPITAÇÃO TOTAL PARA CADA MÊS USANDO SUM ().
+//2. CALCULE A PRECIPITAÇÃO MÉDIA MENSAL USANDO A MÉDIA ().
+
+// CALCULANDO PRECIPITAÇÃO MENSAL PARA A REGIÃO
+
+var months = ee.List.sequence(1, 12);
+
+var monthlyPrecip =  ee.ImageCollection.fromImages(
+  years.map(function (y) {
+    return months.map(function(m) {
+      var w = precip.filter(ee.Filter.calendarRange(y, y, 'year'))
+                    .filter(ee.Filter.calendarRange(m, m, 'month'))
+                    .sum();
+      return w.set('year', y)
+              .set('month', m)
+              .set('system:time_start', ee.Date.fromYMD(y, m, 1));
+                        
+    });
+  }).flatten()
+);
+
+var monthlyMean = monthlyPrecip.mean().clip(roi);
+pViz_month['max'] = 400;
+
+//CALCULE A PRECIPITAÇÃO MÉDIA MENSAL. AJUSTE O GRÁFICO DE ACORDO E EXIBA NO CONSOLE.
+
+var meanMonthlyP =  ee.ImageCollection.fromImages(
+  months.map(function (m) {
+    var w = monthlyPrecip.filter(ee.Filter.eq('month', m)).mean();
+    return w.set('month', m)
+            .set('system:time_start',ee.Date.fromYMD(1, m, 1)); 
+  }).flatten()
+);
+
+//GRÁFICO DA PRECIPITAÇÃO MÉDIA MENSAL POR REGIÃO
+
+title['title'] = 'Precipitação Mensal';
+var chartMonthly = ui.Chart.image.seriesByRegion({
+  imageCollection: meanMonthlyP, 
+  regions: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 2500,
+  xProperty: 'system:time_start',
+  seriesProperty: 'NOME'
+}).setOptions(title_month)
+  .setChartType('ColumnChart');
+
+print(chartMonthly);
+
+//GRAFICO PRECIPITAÇÃO MÉDIA MENSAL DA SÉRIE
+
+print(ui.Chart.image.series(monthlyPrecip , roi, ee.Reducer.mean(), 2500)
+.setOptions({
+  title: "Precipitação mensal",
+  hAxis: {title: 'Período'},
+  vAxis: {title: 'Precipitação (mm)'},
+  colors: ['#EF851C'],
+  seriesProperty: 'NOME',
+  pointSize: 3}));
+  
+var chart_m = ui.Chart.image.seriesByRegion({
+  imageCollection: monthlyPrecip, 
+  regions: roi,
+  reducer: ee.Reducer.mean(),
+  band: 'precipitation',
+  scale: 2500,
+  xProperty: 'system:time_start',
+  seriesProperty: 'NOME'
+}).setOptions(title)
+  .setChartType('LineChart');
+print(chart_m);
+
+//CONSTRUINDO A LEGENDA DAS IMAGENS
+
+function makeLegend(vis) {
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply((vis.max-vis.min)/100.0).add(vis.min);
+  var legendImage = gradient.visualize(vis);
+  
+// ADICIONAR PAINEL DE LEGENDA E ADICIONAR LEGENDA AO MAPA
+  var thumb = ui.Thumbnail({
+    image: legendImage, 
+    params: {bbox:'0,0,100,8', dimensions:'256x15'}, 
+    style: {padding: '1px', position: 'bottom-left'}
+  });
+  var panel = ui.Panel({
+    widgets: [
+      ui.Label(String(vis['min'])), 
+      ui.Label({style: {stretch: 'horizontal'}}), 
+      ui.Label(vis['max'])
+    ],
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {stretch: 'horizontal'}
+  });
+  return ui.Panel().add(panel).add(thumb);
+}
+
+//EXPORTAR DADOS DA COLEÇÃO 
+
+//SELECIONAR AS BANDAS QUE IRÃO COMPOR O DOWNLOAD
+
+function selected(image){
+  return ee.Image(image).select('precipitation').clipToCollection(roi) //selecionadas as bandas que irão compor a coleção
+  }
+var colecao = annualPrecip.map(selected) //definida a função map (similar a função loop)
+var listed = colecao.toList(5) // tolist pode variar de 1 ao infinito. Neste caso, atribuído o valor que é resultado de 365 dias /5 dias
+print(listed) // função para imprimir a lista de imagens existentes 
+var size = listed.size().getInfo()
+print('size',size)
+
+//definição da variável tempo
+for(var i = 0;i < size;++i)
+{ 
+
+// função de exportação onde foram definidos os seguintes parâmetros:
+  var Name = ee.Image(listed.get(i)).get('system:index').getInfo(); //nome da imagem
+  Export.image.toDrive({
+    image:listed.get(i), 
+    description:Name, 
+    region: roi.geometry().bounds(),
+    folder:'CHIRPS', //pasta criada no Google Drive onde serão salvas as imagens
+    scale:10000, //escala pode variar de 30 a 100000, depedenrá da imagem 
+    maxPixels:1e13  //neste tópico foram definidos o numero máximos de pixel que podem compor uma imagem. 1^13
+  })
+}
+
+//ADICIONAR LAYERS DAS IMAGENS E ÁREA DE INTERESSE
+Map.addLayer(roi,0);
+Map.centerObject(roi, 6);
+Map.addLayer(annualMean, pViz, 'Precipitação Média Anual',0);
+Map.addLayer(monthlyMean, pViz_month, 'Precipitação Média Mensal',0);
+Map.add(makeLegend(pViz));
+
